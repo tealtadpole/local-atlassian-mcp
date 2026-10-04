@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jira-mcp"
+version = "0.1.0"
+description = "Read-only Jira Cloud access (JQL search, issue + comments), served as a local MCP server"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+    "requests>=2.31",
+]
+
+[project.urls]
+Repository = "https://github.com/tealtadpole/local-jira-mcp"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+jira-mcp = "jira_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
