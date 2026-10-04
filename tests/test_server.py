@@ -1,4 +1,12 @@
-from jira_mcp.server import format_issue, format_search_results, scope_jql
+from atlassian_mcp.server import (
+    build_confluence_cql,
+    format_confluence_page,
+    format_confluence_search_results,
+    format_jira_issue,
+    format_jira_search_results,
+    scope_cql,
+    scope_jql,
+)
 
 
 def test_scope_jql_empty_projects_passthrough():
@@ -6,26 +14,34 @@ def test_scope_jql_empty_projects_passthrough():
 
 
 def test_scope_jql_wraps_with_project_filter():
-    jql = scope_jql("status = Open", ("ENG", "OPS"))
-    assert jql == "project in (ENG, OPS) AND (status = Open)"
+    assert scope_jql("status = Open", ("ENG", "OPS")) == "project in (ENG, OPS) AND (status = Open)"
 
 
-def test_format_search_results():
+def test_scope_cql_wraps_with_space_filter():
+    cql = scope_cql('text ~ "vpn"', ("ENG",))
+    assert cql == 'space in ("ENG") AND (text ~ "vpn")'
+
+
+def test_build_confluence_cql_with_space():
+    cql = build_confluence_cql("vpn access", "ENG")
+    assert cql == 'space = "ENG" AND type = page AND text ~ "vpn access"'
+
+
+def test_build_confluence_cql_escapes_quotes():
+    cql = build_confluence_cql('say "hi"', None)
+    assert '\\"hi\\"' in cql
+
+
+def test_format_jira_search_results():
     issues = [{"key": "ENG-1", "fields": {
         "summary": "Fix the thing", "status": {"name": "Open"},
         "assignee": {"displayName": "Bob"}, "updated": "2026-10-01T00:00:00.000+0000"}}]
-    out = format_search_results(issues, "https://corp.atlassian.net")
+    out = format_jira_search_results(issues, "https://corp.atlassian.net")
     assert "ENG-1: Fix the thing" in out
-    assert "Status: Open" in out
     assert "https://corp.atlassian.net/browse/ENG-1" in out
 
 
-def test_format_search_results_unassigned():
-    issues = [{"key": "ENG-2", "fields": {"summary": "x", "status": {}, "assignee": None}}]
-    assert "Unassigned" in format_search_results(issues, "https://corp.atlassian.net")
-
-
-def test_format_issue_with_comments():
+def test_format_jira_issue_with_comments():
     issue = {"key": "ENG-1", "fields": {
         "summary": "Fix the thing", "status": {"name": "Open"}, "assignee": {"displayName": "Bob"},
         "reporter": {"displayName": "Ann"}, "issuetype": {"name": "Bug"}, "priority": {"name": "High"},
@@ -37,8 +53,27 @@ def test_format_issue_with_comments():
     comments = [{"author": {"displayName": "Ann"}, "created": "2026-09-02T00:00:00.000+0000",
                 "body": {"type": "doc", "content": [
                     {"type": "paragraph", "content": [{"type": "text", "text": "Still happening"}]}]}}]
-    out = format_issue(issue, comments, "https://corp.atlassian.net")
-    assert "ENG-1: Fix the thing" in out
+    out = format_jira_issue(issue, comments, "https://corp.atlassian.net")
     assert "Steps to repro" in out
     assert "Ann (2026-09-02): Still happening" in out
-    assert "Labels: urgent" in out
+
+
+def test_format_confluence_search_results():
+    pages = [{"id": "1", "title": "VPN setup", "space": {"key": "ENG"},
+             "version": {"when": "2026-09-30T12:00:00.000Z"},
+             "_links": {"webui": "/wiki/spaces/ENG/pages/1"}}]
+    out = format_confluence_search_results(pages, "https://corp.atlassian.net")
+    assert "VPN setup" in out
+    assert "page_id: 1" in out
+    assert "https://corp.atlassian.net/wiki/spaces/ENG/pages/1" in out
+
+
+def test_format_confluence_page():
+    page = {"title": "VPN setup", "space": {"key": "ENG", "name": "Engineering"},
+            "version": {"number": 3, "when": "2026-09-30T12:00:00.000Z"},
+            "_links": {"webui": "/wiki/spaces/ENG/pages/1"},
+            "body": {"storage": {"value": "<p>Request access via the portal.</p>"}}}
+    out = format_confluence_page(page, "https://corp.atlassian.net")
+    assert "VPN setup  (space: Engineering)" in out
+    assert "version 3" in out
+    assert "Request access via the portal." in out

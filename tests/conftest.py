@@ -4,37 +4,42 @@ from pathlib import Path
 
 import pytest
 
-from fake_jira import EMAIL, TOKEN
-from jira_mcp.config import load_config
+from atlassian_mcp.config import load_config
+from fake_atlassian import EMAIL, TOKEN
 
 HERE = Path(__file__).parent
 
 
 @pytest.fixture
 def fake():
-    from fake_jira import FakeJira
+    from fake_atlassian import FakeAtlassian
 
-    f = FakeJira(projects=["ENG", "OPS"])
+    f = FakeAtlassian(projects=["ENG", "OPS"], spaces={"ENG": "Engineering", "HR": "People"})
     yield f
     f.stop()
 
 
 @pytest.fixture
 def make_config(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("JIRA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("ATLASSIAN_API_TOKEN", TOKEN)
 
-    def make(base_url: str, projects=(), **sections) -> object:
+    def make(base_url: str, projects=(), spaces=(), **sections) -> object:
         extra = ""
         for name, values in sections.items():
             extra += f"\n[{name}]\n" + "\n".join(f"{k} = {_toml(v)}" for k, v in values.items())
         cfg = tmp_path / "config.toml"
         cfg.write_text(f"""
-[jira]
+[atlassian]
 base_url = "{base_url}"
 email = "{EMAIL}"
-projects = {_toml(list(projects))}
 request_delay_seconds = 0
 max_retries = 2
+
+[jira]
+projects = {_toml(list(projects))}
+
+[confluence]
+spaces = {_toml(list(spaces))}
 {extra}
 """)
         return load_config(cfg)

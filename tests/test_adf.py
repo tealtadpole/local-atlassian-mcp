@@ -1,4 +1,4 @@
-from jira_mcp.adf import render_adf
+from atlassian_mcp.adf import render_adf
 
 
 def test_none_is_empty():

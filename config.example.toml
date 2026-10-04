@@ -1,9 +1,10 @@
-# jira-mcp configuration.
+# atlassian-mcp configuration.
 # Copy to config.toml (gitignored) and fill in.
 
-[jira]
-# Jira Cloud site, e.g. "https://yourcompany.atlassian.net". Jira Server/Data Center
-# isn't supported here (different auth + REST version); see README Limitations.
+[atlassian]
+# Atlassian Cloud site, e.g. "https://yourcompany.atlassian.net". Shared by Jira and
+# Confluence since both products live on the same site. Server/Data Center isn't
+# supported here (different auth + API versions); see README Limitations.
 base_url = "https://example.atlassian.net"
 
 # The Atlassian account email that owns the API token below. Not a secret.
@@ -13,19 +14,26 @@ email = "you@example.com"
 # The environment variable named by token_env wins if it is set; otherwise `token`
 # below is used. Prefer the environment variable so the secret never sits in a file.
 # If you do put it here, `chmod 600` this file.
-token_env = "JIRA_API_TOKEN"
+token_env = "ATLASSIAN_API_TOKEN"
 token = ""
-
-# Optional allow-list of project keys, e.g. ["ENG", "OPS"]. Every search is scoped
-# to these projects even if the token can see more. Empty = no extra restriction
-# beyond what the token itself can see.
-projects = []
 
 # true, false, or a path to a CA bundle (common behind corporate TLS proxies).
 verify_ssl = true
 timeout_seconds = 30
 request_delay_seconds = 0
 max_retries = 5
+
+[jira]
+enabled = true
+# Optional allow-list of project keys, e.g. ["ENG", "OPS"]. Every search is scoped
+# to these projects even if the token can see more. Empty = no extra restriction
+# beyond what the token itself can see.
+projects = []
+
+[confluence]
+enabled = true
+# Optional allow-list of space keys, e.g. ["ENG", "HR"]. Same idea as jira.projects.
+spaces = []
 
 [search]
 default_results = 10

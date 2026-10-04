@@ -1,4 +1,4 @@
-"""A tiny stand-in for the Jira Cloud REST API, served over real HTTP."""
+"""A tiny stand-in for the Jira Cloud + Confluence Cloud REST APIs, served over real HTTP."""
 
 from __future__ import annotations
 
@@ -24,13 +24,27 @@ class FakeIssue:
 
 
 @dataclass
-class FakeJira:
+class FakePage:
+    id: str
+    space: str
+    title: str
+    body: str
+    version: int = 1
+
+
+@dataclass
+class FakeAtlassian:
     issues: dict[str, FakeIssue] = field(default_factory=dict)
     projects: list[str] = field(default_factory=list)
+    pages: dict[str, FakePage] = field(default_factory=dict)
+    spaces: dict[str, str] = field(default_factory=dict)   # key -> name
     requests: list[str] = field(default_factory=list)
 
-    def add(self, key, summary, **kwargs):
+    def add_issue(self, key, summary, **kwargs):
         self.issues[key] = FakeIssue(key, summary, **kwargs)
+
+    def add_page(self, id, space, title, body, version=1):
+        self.pages[id] = FakePage(id, space, title, body, version)
 
     # ---- HTTP plumbing ------------------------------------------------------
 
@@ -77,7 +91,7 @@ class FakeJira:
         if hasattr(self, "httpd"):
             self.httpd.shutdown()
 
-    # ---- API ----------------------------------------------------------------
+    # ---- Jira -----------------------------------------------------------------
 
     def route(self, method, path, q, body):
         if path == "/rest/api/3/myself":
@@ -100,6 +114,19 @@ class FakeJira:
                 return 404, {"errorMessages": ["Issue does not exist"]}
             fields = (q.get("fields") or "").split(",") if q.get("fields") else None
             return 200, self._issue_json(issue, fields)
+
+        if path == "/wiki/rest/api/space":
+            items = [{"key": k, "name": n} for k, n in sorted(self.spaces.items())]
+            return 200, {"results": items, "_links": {}}
+        if path == "/wiki/rest/api/content/search":
+            cql = q.get("cql", "")
+            items = [self._page_json(p) for p in self.pages.values() if self._matches(p, cql)]
+            return 200, {"results": items}
+        if path.startswith("/wiki/rest/api/content/"):
+            page = self.pages.get(path.rsplit("/", 1)[-1])
+            if page is None:
+                return 404, {"message": "not found"}
+            return 200, self._page_json(page)
         return 404, {"errorMessages": [f"unknown path {path}"]}
 
     def _issue_json(self, issue: FakeIssue, fields: list[str] | None) -> dict:
@@ -111,3 +138,30 @@ class FakeJira:
         }
         chosen = {k: v for k, v in all_fields.items() if not fields or k in fields}
         return {"key": issue.key, "fields": chosen}
+
+    def _page_json(self, p: FakePage) -> dict:
+        return {
+            "id": p.id, "title": p.title,
+            "space": {"key": p.space, "name": self.spaces.get(p.space, p.space)},
+            "version": {"number": p.version, "when": "2026-09-30T12:00:00.000Z"},
+            "body": {"storage": {"value": p.body, "representation": "storage"}},
+            "_links": {"webui": f"/wiki/spaces/{p.space}/pages/{p.id}"},
+        }
+
+    @staticmethod
+    def _matches(page: FakePage, cql: str) -> bool:
+        # Good enough for tests: pull the quoted text term and the optional space filter out.
+        import re
+
+        space_match = re.search(r'space\s*=\s*"([^"]+)"', cql)
+        if space_match and space_match.group(1) != page.space:
+            return False
+        space_in = re.search(r"space in \(([^)]*)\)", cql)
+        if space_in:
+            allowed = {s.strip().strip('"') for s in space_in.group(1).split(",")}
+            if page.space not in allowed:
+                return False
+        text_match = re.search(r'text ~ "([^"]*)"', cql)
+        if text_match and text_match.group(1).lower() not in page.title.lower() + page.body.lower():
+            return False
+        return True

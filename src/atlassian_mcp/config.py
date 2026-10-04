@@ -11,10 +11,10 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-ENV_CONFIG_PATH = "JIRA_MCP_CONFIG"
+ENV_CONFIG_PATH = "ATLASSIAN_MCP_CONFIG"
 DEFAULT_LOCATIONS = (
     Path("config.toml"),
-    Path("~/.config/jira-mcp/config.toml").expanduser(),
+    Path("~/.config/atlassian-mcp/config.toml").expanduser(),
 )
 
 
@@ -23,19 +23,31 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
-class JiraConfig:
+class AtlassianConfig:
+    """Connection shared by Jira Cloud and Confluence Cloud: same site, same auth."""
+
     base_url: str
     email: str
     token: str
-    projects: tuple[str, ...] = ()
     verify_ssl: bool | str = True
     timeout_seconds: float = 30
     request_delay_seconds: float = 0
     max_retries: int = 5
 
     def __repr__(self) -> str:  # keep the token out of logs and tracebacks
-        return (f"JiraConfig(base_url={self.base_url!r}, email={self.email!r}, "
-                f"projects={self.projects!r})")
+        return f"AtlassianConfig(base_url={self.base_url!r}, email={self.email!r})"
+
+
+@dataclass(frozen=True)
+class JiraConfig:
+    enabled: bool = True
+    projects: tuple[str, ...] = ()   # optional allow-list; empty = whatever the token can see
+
+
+@dataclass(frozen=True)
+class ConfluenceConfig:
+    enabled: bool = True
+    spaces: tuple[str, ...] = ()   # optional allow-list; empty = whatever the token can see
 
 
 @dataclass(frozen=True)
@@ -47,7 +59,9 @@ class SearchConfig:
 @dataclass(frozen=True)
 class Config:
     path: Path
+    atlassian: AtlassianConfig
     jira: JiraConfig
+    confluence: ConfluenceConfig
     search: SearchConfig
 
 
@@ -76,21 +90,26 @@ def load_config(explicit: str | os.PathLike | None = None) -> Config:
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: invalid TOML: {e}") from e
 
-    unknown = set(raw) - {"jira", "search"}
+    unknown = set(raw) - {"atlassian", "jira", "confluence", "search"}
     if unknown:
         raise ConfigError(f"{path}: unknown section(s): {', '.join(sorted(unknown))}")
 
-    jira = _jira_section(raw.get("jira", {}), path)
+    atlassian = _atlassian_section(raw.get("atlassian", {}), path)
+    jira = _section(JiraConfig, _tuples(raw.get("jira", {}), "projects"), "jira")
+    confluence = _section(ConfluenceConfig, _tuples(raw.get("confluence", {}), "spaces"), "confluence")
     search = _section(SearchConfig, raw.get("search", {}), "search")
+
+    if not (jira.enabled or confluence.enabled):
+        raise ConfigError("Enable at least one of [jira] or [confluence]")
     if search.default_results > search.max_results:
         raise ConfigError("search.default_results must not exceed search.max_results")
 
-    return Config(path=path, jira=jira, search=search)
+    return Config(path=path, atlassian=atlassian, jira=jira, confluence=confluence, search=search)
 
 
-def _jira_section(raw: dict[str, Any], path: Path) -> JiraConfig:
+def _atlassian_section(raw: dict[str, Any], path: Path) -> AtlassianConfig:
     raw = dict(raw)
-    token_env = raw.pop("token_env", "JIRA_API_TOKEN")
+    token_env = raw.pop("token_env", "ATLASSIAN_API_TOKEN")
     file_token = raw.pop("token", "")
     token = os.environ.get(token_env, "") if token_env else ""
     if not token and file_token:
@@ -99,34 +118,39 @@ def _jira_section(raw: dict[str, Any], path: Path) -> JiraConfig:
             log.warning("%s contains a token but is readable by other users; run: chmod 600 %s",
                         path, path)
     if not token:
-        raise ConfigError(f"No Jira API token: set ${token_env} or jira.token in {path}")
+        raise ConfigError(f"No Atlassian API token: set ${token_env} or atlassian.token in {path}")
 
     email = str(raw.get("email", ""))
     if "@" not in email:
-        raise ConfigError("jira.email must be the Atlassian account email for the API token")
+        raise ConfigError("atlassian.email must be the Atlassian account email for the API token")
 
     base_url = str(raw.get("base_url", "")).rstrip("/")
     if not base_url.startswith(("https://", "http://")):
-        raise ConfigError("jira.base_url must be an http(s) URL")
+        raise ConfigError("atlassian.base_url must be an http(s) URL")
     if base_url.startswith("http://"):
-        log.warning("jira.base_url uses plain http; your credentials are sent unencrypted")
+        log.warning("atlassian.base_url uses plain http; your credentials are sent unencrypted")
     if "example.atlassian.net" in base_url:
-        raise ConfigError("jira.base_url is still the example value; set your Jira site URL")
-
-    projects = raw.get("projects", [])
-    if not isinstance(projects, list) or not all(isinstance(p, str) for p in projects):
-        raise ConfigError("jira.projects must be a list of project keys")
-    raw["projects"] = tuple(projects)
+        raise ConfigError("atlassian.base_url is still the example value; set your Atlassian site URL")
 
     verify = raw.get("verify_ssl", True)
     if isinstance(verify, str):
         verify_path = _resolve(verify, path.parent)
         if not verify_path.exists():
-            raise ConfigError(f"jira.verify_ssl CA bundle not found: {verify_path}")
+            raise ConfigError(f"atlassian.verify_ssl CA bundle not found: {verify_path}")
         raw["verify_ssl"] = str(verify_path)
 
     raw["base_url"] = base_url
-    return _section(JiraConfig, raw, "jira", extra={"token": token})
+    return _section(AtlassianConfig, raw, "atlassian", extra={"token": token})
+
+
+def _tuples(values: dict[str, Any], *keys: str) -> dict[str, Any]:
+    out = dict(values)
+    for k in keys:
+        if k in out:
+            if not isinstance(out[k], list):
+                raise ConfigError(f"`{k}` must be a list")
+            out[k] = tuple(out[k])
+    return out
 
 
 def _section(cls, raw: dict[str, Any], name: str, *, defaults=None, extra=None):
